@@ -24,9 +24,8 @@ jobs:
           - platform: ios
             os: macos-latest
             build-command: |
-              # 确保Flutter构建目标为iOS
               flutter config --enable-ios
-              flutter build ios --release --no-codesign --target-platform ios-arm64
+              flutter build ios --release --no-codesign
 
               xcodebuild archive \
                 -workspace ios/Runner.xcworkspace \
