@@ -125,13 +125,18 @@ jobs:
       - name: Zip Linux
         if: matrix.platform == 'linux'
         run: |
-          zip -r linux-build.zip build/linux/x64/release/bundle/*
+          cd build/linux/x64/release/bundle
+          zip -r ../../../../linux-build.zip ./*
+          cd -
           ls -lh linux-build.zip
 
       - name: Zip macOS
         if: matrix.platform == 'macos'
         run: |
-          zip -r macos-build.zip build/macos/Build/Products/Release/*.app
+          APP_FILE=$(find build/macos/Build/Products/Release -name "*.app" -maxdepth 1)
+          cd $(dirname "$APP_FILE")
+          zip -r ../../../../../macos-build.zip $(basename "$APP_FILE")
+          cd -
           ls -lh macos-build.zip
 
       - name: Verify build artifacts
