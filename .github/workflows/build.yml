@@ -24,13 +24,14 @@ jobs:
           - platform: ios
             os: macos-latest
             build-command: |
-              sed -i '' 's/target \'iOS 9.0\'/target \'iOS 12.0\'/g' ios/Podfile
+              sed -i '' "s/target 'iOS 9.0'/target 'iOS 12.0'/g" ios/Podfile
+              sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = 9.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g" ios/Podfile
               cd ios
               pod install --repo-update
               cd ..
               
-              find ios/Pods -name "*.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 9.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g' {} \;
-              find ios/Pods -name "*.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 10.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g' {} \;
+              find ios/Pods -name "*.pbxproj" -exec sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = 9.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g" {} \;
+              find ios/Pods -name "*.pbxproj" -exec sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = 10.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g" {} \;
 
               flutter config --enable-ios
               flutter build ios --release --no-codesign \
@@ -145,7 +146,6 @@ jobs:
         run: |
           brew install xcodegen || true
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
-          # 降级CocoaPods以兼容Xcode 16
           sudo gem install cocoapods -v 1.15.2
 
       - name: Flutter pub get
