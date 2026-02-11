@@ -2,7 +2,7 @@ name: Flutter Build All Platforms
 
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -166,7 +166,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: daily-build-${{ github.run_id }}
-          name: Daily Build ${{ github.run_id }}
+          tag_name: weekly-build-${{ github.run_id }}
+          name: Weekly Build ${{ github.run_id }}
           files: release_artifacts/**/*
           generate_release_notes: true
