@@ -24,6 +24,16 @@ jobs:
             os: macos-latest
             build-command: |
               flutter build ios --release --no-codesign
+
+              xcodebuild archive \
+                -workspace ios/Runner.xcworkspace \
+                -scheme Runner \
+                -configuration Release \
+                -archivePath build/ios/Runner.xcarchive \
+                CODE_SIGN_IDENTITY="" \
+                CODE_SIGNING_REQUIRED=NO \
+                CODE_SIGNING_ALLOWED=NO
+
               cat > exportOptions.plist <<EOF
               <?xml version="1.0" encoding="UTF-8"?>
               <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -35,8 +45,6 @@ jobs:
                 <string>manual</string>
                 <key>stripSwiftSymbols</key>
                 <true/>
-                <key>cnb</key>
-                <string>cnb</string>
                 <key>compileBitcode</key>
                 <false/>
                 <key>CODE_SIGN_IDENTITY</key>
@@ -48,9 +56,9 @@ jobs:
               </dict>
               </plist>
               EOF
-              chmod 644 exportOptions.plist
+
               xcodebuild -exportArchive \
-                -archivePath build/ios/archive/Runner.xcarchive \
+                -archivePath build/ios/Runner.xcarchive \
                 -exportPath build/ios/ipa \
                 -exportOptionsPlist exportOptions.plist \
                 -allowProvisioningUpdates \
@@ -74,12 +82,9 @@ jobs:
         run: |
           git clone https://cnb.cool/wget/i/synclipboard temp_repo
           if ($Env:RUNNER_OS -eq "Windows") {
-              # PowerShell递归复制所有文件（包括隐藏文件）
               Get-ChildItem -Path temp_repo -Recurse | Move-Item -Destination . -Force
-              # 删除空的临时目录
               Remove-Item -Path temp_repo -Recurse -Force
           } else {
-              # Linux/macOS平台：保留原有bash逻辑
               mv temp_repo/* .
               mv temp_repo/.* . 2>/dev/null || true
               rm -rf temp_repo
@@ -93,6 +98,7 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
+          cache: 'gradle'
 
       - name: 设置Flutter环境
         uses: subosito/flutter-action@v2
@@ -120,7 +126,7 @@ jobs:
             lld \
             zip
 
-      - name: 安装依赖并忽略版本警告
+      - name: 安装依赖
         run: |
           flutter pub get
 
