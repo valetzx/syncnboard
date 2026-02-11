@@ -9,7 +9,6 @@ permissions:
   contents: write
 
 jobs:
-  # 第一步：构建各平台产物并上传Artifact
   build:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
@@ -72,18 +71,21 @@ jobs:
 
     steps:
       - name: 克隆指定远程仓库代码
-        shell: bash
         run: |
           git clone https://cnb.cool/wget/i/synclipboard temp_repo
-          if [[ "$(uname -s)" == "Linux" || "$(uname -s)" == "Darwin" ]]; then
-            mv temp_repo/* .
-            mv temp_repo/.* . 2>/dev/null || true
-          else
-            robocopy temp_repo . /E /NP
-            timeout /t 2 /nobreak >nul
-            rmdir /S /Q temp_repo
-          fi
-          ls -l || dir
+          if ($Env:RUNNER_OS -eq "Windows") {
+              # PowerShell递归复制所有文件（包括隐藏文件）
+              Get-ChildItem -Path temp_repo -Recurse | Move-Item -Destination . -Force
+              # 删除空的临时目录
+              Remove-Item -Path temp_repo -Recurse -Force
+          } else {
+              # Linux/macOS平台：保留原有bash逻辑
+              mv temp_repo/* .
+              mv temp_repo/.* . 2>/dev/null || true
+              rm -rf temp_repo
+          }
+          Get-ChildItem || ls -l
+        shell: pwsh
 
       - name: 设置Java环境
         if: matrix.platform == 'android'
@@ -174,9 +176,8 @@ jobs:
         with:
           path: release_artifacts
 
-      - name: 查看下载的产物
-        run: |
-          ls -R release_artifacts
+      - name: 查看下载的产物（调试用）
+        run: ls -R release_artifacts
 
       - name: 创建GitHub Release
         uses: softprops/action-gh-release@v2
@@ -185,5 +186,3 @@ jobs:
           name: Daily Build ${{ github.run_id }}
           files: release_artifacts/**/*
           generate_release_notes: true
-          # 可选：如果需要覆盖同名tag，添加以下配置
-          # overwrite: true
