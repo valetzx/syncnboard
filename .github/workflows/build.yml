@@ -1,0 +1,128 @@
+name: Flutter Build All Platforms
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            os: ubuntu-latest
+            build-command: flutter build apk --release --split-per-abi
+          - platform: ios
+            os: macos-latest
+            build-command: flutter build ipa --release --no-codesign
+          - platform: web
+            os: ubuntu-latest
+            build-command: flutter build web --release
+          - platform: windows
+            os: windows-latest
+            build-command: flutter build windows --release
+          - platform: macos
+            os: macos-latest
+            build-command: flutter build macos --release
+          - platform: linux
+            os: ubuntu-latest
+            build-command: flutter build linux --release
+
+    steps:
+      - name: 克隆指定远程仓库代码
+        run: |
+          git clone https://cnb.cool/wget/i/synclipboard temp_repo
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            mv temp_repo/* .
+            mv temp_repo/.* . 2>/dev/null || true
+          else
+            robocopy temp_repo . /E /MOV
+            rmdir /S /Q temp_repo
+          fi
+          ls -l || dir
+
+      - name: 设置Java环境
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: 设置Flutter环境
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+          cache: true
+
+      - name: 安装依赖
+        run: flutter pub get
+
+      - name: 创建签名配置
+        if: matrix.platform == 'android'
+        env:
+          FLUTTER_ANDROID_KEYSTORE_BASE64: ${{ secrets.FLUTTER_ANDROID_KEYSTORE_BASE64 }}
+          FLUTTER_KEYSTORE_PASSWORD: ${{ secrets.FLUTTER_KEYSTORE_PASSWORD }}
+          FLUTTER_KEY_ALIAS: ${{ secrets.FLUTTER_KEY_ALIAS }}
+        run: |
+          echo "$FLUTTER_ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/cnbclpboard.jks
+          cat > android/key.properties << EOF
+          storePassword=$FLUTTER_KEYSTORE_PASSWORD
+          keyPassword=$FLUTTER_KEYSTORE_PASSWORD
+          keyAlias=$FLUTTER_KEY_ALIAS
+          storeFile=cnbclpboard.jks
+          EOF
+
+      - name: 构建对应平台产物
+        run: ${{ matrix.build-command }}
+      
+      - name: 压缩Windows产物为ZIP
+        if: matrix.platform == 'windows'
+        working-directory: build/windows/x64/runner/Release
+        run: Compress-Archive -Path .\* -DestinationPath ..\..\..\..\windows-build.zip
+
+      - name: 压缩Linux产物为ZIP
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y zip
+          cd build/linux/x64/release/bundle
+          zip -r ../../../../linux-build.zip .
+
+      - name: 压缩macOS产物为ZIP
+        if: matrix.platform == 'macos'
+        run: |
+          cd build/macos/Build/Products/Release/
+          zip -r ../../../../../macos-build.zip *.app
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-build-${{ matrix.platform }}
+          path: |
+            build/app/outputs/apk/release/*.apk
+            build/ios/ipa/*.ipa
+            build/web/
+            windows-build.zip
+            macos-build.zip
+            linux-build.zip
+          retention-days: 7
+
+      - name: 创建GitHub Release
+        if: matrix.platform == 'android'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: daily-build-${{ github.run_id }}
+          name: Daily Build ${{ github.run_id }}
+          files: |
+            build/app/outputs/apk/release/*.apk
+            build/ios/ipa/*.ipa
+            windows-build.zip
+            linux-build.zip
+            macos-build.zip
+          generate_release_notes: true
