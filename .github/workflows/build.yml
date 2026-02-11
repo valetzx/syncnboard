@@ -19,22 +19,47 @@ jobs:
           - platform: android
             os: ubuntu-latest
             build-command: flutter build apk --release --split-per-abi
+            artifact-paths: build/app/outputs/apk/release/*.apk
           - platform: ios
             os: macos-latest
-            build-command: flutter build ipa --release --no-codesign
-          # 注释掉web构建
+            build-command: |
+              flutter build ios --release --no-codesign
+              xcodebuild -exportArchive -archivePath build/ios/archive/Runner.xcarchive -exportPath build/ios/ipa -exportOptionsPlist <(cat <<EOF
+              <?xml version="1.0" encoding="UTF-8"?>
+              <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+              <plist version="1.0">
+              <dict>
+                <key>method</key>
+                <string>ad-hoc</string>
+                <key>signingStyle</key>
+                <string>manual</string>
+                <key>stripSwiftSymbols</key>
+                <true/>
+                <key>cnb</key>
+                <string>cnb</string>
+                <key>compileBitcode</key>
+                <false/>
+              </dict>
+              </plist>
+              EOF
+              ) -allowProvisioningUpdates
+            artifact-paths: build/ios/ipa/*.ipa
           # - platform: web
           #   os: ubuntu-latest
           #   build-command: flutter build web --release
+          #   artifact-paths: build/web/**/*
           - platform: windows
             os: windows-latest
             build-command: flutter build windows --release
+            artifact-paths: windows-build.zip
           - platform: macos
             os: macos-latest
             build-command: flutter build macos --release
+            artifact-paths: macos-build.zip
           - platform: linux
             os: ubuntu-latest
             build-command: flutter build linux --release
+            artifact-paths: linux-build.zip
 
     steps:
       - name: 克隆指定远程仓库代码
@@ -124,13 +149,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flutter-build-${{ matrix.platform }}
-          path: |
-            build/app/outputs/apk/release/*.apk
-            build/ios/ipa/*.ipa
-            windows-build.zip
-            macos-build.zip
-            linux-build.zip
+          path: ${{ matrix.artifact-paths }}
           retention-days: 7
+
+      - name: 收集所有产物用于Release
+        if: matrix.platform == 'android'
+        run: |
+          mkdir -p release_artifacts
+          cp build/app/outputs/apk/release/*.apk release_artifacts/
+          gh run download ${{ github.run_id }} --name flutter-build-ios --dir release_artifacts
+          gh run download ${{ github.run_id }} --name flutter-build-windows --dir release_artifacts
+          gh run download ${{ github.run_id }} --name flutter-build-macos --dir release_artifacts
+          gh run download ${{ github.run_id }} --name flutter-build-linux --dir release_artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: 创建GitHub Release
         if: matrix.platform == 'android'
@@ -138,10 +170,5 @@ jobs:
         with:
           tag_name: daily-build-${{ github.run_id }}
           name: Daily Build ${{ github.run_id }}
-          files: |
-            build/app/outputs/apk/release/*.apk
-            build/ios/ipa/*.ipa
-            windows-build.zip
-            linux-build.zip
-            macos-build.zip
+          files: release_artifacts/*
           generate_release_notes: true
