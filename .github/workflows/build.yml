@@ -58,8 +58,9 @@ jobs:
       - name: 设置Flutter环境
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 'stable'
-          cache: true
+          channel: stable
+          flutter-version: 3.38.8
+      - run: flutter --version
 
       - name: 安装依赖
         run: flutter pub get
