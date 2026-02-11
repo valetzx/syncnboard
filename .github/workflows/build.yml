@@ -9,6 +9,7 @@ permissions:
   contents: write
 
 jobs:
+  # 第一步：构建各平台产物并上传Artifact
   build:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
@@ -118,7 +119,7 @@ jobs:
 
       - name: 安装依赖并忽略版本警告
         run: |
-          flutter pub get --no-fatal
+          flutter pub get
 
       - name: 创建签名配置
         if: matrix.platform == 'android'
@@ -163,25 +164,26 @@ jobs:
           path: ${{ matrix.artifact-paths }}
           retention-days: 7
 
-      - name: 收集所有产物用于Release
-        if: matrix.platform == 'android'
+  create-release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载所有平台构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: release_artifacts
+
+      - name: 查看下载的产物
         run: |
-          mkdir -p release_artifacts
-          cp build/app/outputs/apk/release/*.apk release_artifacts/
-          for platform in ios windows macos linux; do
-            gh run download ${{ github.run_id }} --name flutter-build-$platform --dir release_artifacts || \
-            (echo "Warning: Failed to download $platform artifacts, retrying..." && \
-             sleep 5 && \
-             gh run download ${{ github.run_id }} --name flutter-build-$platform --dir release_artifacts)
-          done
-        env:
-          GH_TOKEN: ${{ github.token }}
+          ls -R release_artifacts
 
       - name: 创建GitHub Release
-        if: matrix.platform == 'android'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: daily-build-${{ github.run_id }}
           name: Daily Build ${{ github.run_id }}
-          files: release_artifacts/*
+          files: release_artifacts/**/*
           generate_release_notes: true
+          # 可选：如果需要覆盖同名tag，添加以下配置
+          # overwrite: true
