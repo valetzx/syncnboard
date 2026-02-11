@@ -47,8 +47,6 @@ jobs:
             robocopy temp_repo . /E /MOV
             rmdir /S /Q temp_repo
           fi
-          
-          # 验证文件（跨系统兼容）
           ls -l || dir
 
       - name: 设置Java环境
