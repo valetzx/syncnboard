@@ -24,8 +24,18 @@ jobs:
           - platform: ios
             os: macos-latest
             build-command: |
+              sed -i '' 's/target \'iOS 9.0\'/target \'iOS 12.0\'/g' ios/Podfile
+              cd ios
+              pod install --repo-update
+              cd ..
+              
+              find ios/Pods -name "*.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 9.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g' {} \;
+              find ios/Pods -name "*.pbxproj" -exec sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 10.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g' {} \;
+
               flutter config --enable-ios
-              flutter build ios --release --no-codesign
+              flutter build ios --release --no-codesign \
+                --dart-define=FLUTTER_BUILD_NUMBER=${{ github.run_id }} \
+                --dart-define=FLUTTER_BUILD_NAME=1.0.${{ github.run_id }}
 
               xcodebuild archive \
                 -workspace ios/Runner.xcworkspace \
@@ -38,7 +48,10 @@ jobs:
                 CODE_SIGNING_REQUIRED=NO \
                 CODE_SIGNING_ALLOWED=NO \
                 ONLY_ACTIVE_ARCH=NO \
-                BUILD_LIBRARY_FOR_DISTRIBUTION=YES
+                BUILD_LIBRARY_FOR_DISTRIBUTION=NO \
+                ENABLE_MODULE_INTERFACE_FLATTENING=NO \
+                SWIFT_COMPILATION_MODE=wholemodule \
+                -verbose
 
               cat > exportOptions.plist <<EOF
               <?xml version="1.0" encoding="UTF-8"?>
@@ -53,13 +66,9 @@ jobs:
                 <true/>
                 <key>compileBitcode</key>
                 <false/>
-                <key>destination</key>
-                <string>export</string>
                 <key>uploadBitcode</key>
                 <false/>
                 <key>uploadSymbols</key>
-                <false/>
-                <key>useDeprecatedExportPlist</key>
                 <false/>
               </dict>
               </plist>
@@ -75,8 +84,7 @@ jobs:
                 CODE_SIGNING_ALLOWED=NO \
                 -verbose
 
-              ls -la build/ios/ipa/ || echo "IPA目录不存在"
-              ls -la build/ios/ipa/*.ipa || echo "IPA文件未生成"
+              ls -la build/ios/ipa/*.ipa || echo "IPA生成失败，检查日志"
             artifact-paths: build/ios/ipa/*.ipa
 
           - platform: windows
@@ -137,6 +145,8 @@ jobs:
         run: |
           brew install xcodegen || true
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          # 降级CocoaPods以兼容Xcode 16
+          sudo gem install cocoapods -v 1.15.2
 
       - name: Flutter pub get
         run: flutter pub get
