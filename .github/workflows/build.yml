@@ -37,15 +37,18 @@ jobs:
 
     steps:
       - name: 克隆指定远程仓库代码
+        shell: bash
         run: |
           git clone https://cnb.cool/wget/i/synclipboard temp_repo
-          if [ "$RUNNER_OS" != "Windows" ]; then
+          if [[ "$(uname -s)" == "Linux" || "$(uname -s)" == "Darwin" ]]; then
             mv temp_repo/* .
             mv temp_repo/.* . 2>/dev/null || true
           else
             robocopy temp_repo . /E /MOV
             rmdir /S /Q temp_repo
           fi
+          
+          # 验证文件（跨系统兼容）
           ls -l || dir
 
       - name: 设置Java环境
