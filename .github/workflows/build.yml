@@ -24,68 +24,13 @@ jobs:
           - platform: ios
             os: macos-latest
             build-command: |
-              sed -i '' "s/target 'iOS 9.0'/target 'iOS 12.0'/g" ios/Podfile
-              sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = 9.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g" ios/Podfile
-              cd ios
-              pod install --repo-update
-              cd ..
-              
-              find ios/Pods -name "*.pbxproj" -exec sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = 9.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g" {} \;
-              find ios/Pods -name "*.pbxproj" -exec sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = 10.0/IPHONEOS_DEPLOYMENT_TARGET = 12.0/g" {} \;
-
-              flutter config --enable-ios
-              flutter build ios --release --no-codesign \
-                --dart-define=FLUTTER_BUILD_NUMBER=${{ github.run_id }} \
-                --dart-define=FLUTTER_BUILD_NAME=1.0.${{ github.run_id }}
-
-              xcodebuild archive \
-                -workspace ios/Runner.xcworkspace \
-                -scheme Runner \
-                -configuration Release \
-                -archivePath build/ios/Runner.xcarchive \
-                -sdk iphoneos \
-                -destination 'generic/platform=iOS' \
-                CODE_SIGN_IDENTITY="" \
-                CODE_SIGNING_REQUIRED=NO \
-                CODE_SIGNING_ALLOWED=NO \
-                ONLY_ACTIVE_ARCH=NO \
-                BUILD_LIBRARY_FOR_DISTRIBUTION=NO \
-                ENABLE_MODULE_INTERFACE_FLATTENING=NO \
-                SWIFT_COMPILATION_MODE=wholemodule \
-                -verbose
-
-              cat > exportOptions.plist <<EOF
-              <?xml version="1.0" encoding="UTF-8"?>
-              <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-              <plist version="1.0">
-              <dict>
-                <key>method</key>
-                <string>release-testing</string>
-                <key>signingStyle</key>
-                <string>automatic</string>
-                <key>stripSwiftSymbols</key>
-                <true/>
-                <key>compileBitcode</key>
-                <false/>
-                <key>uploadBitcode</key>
-                <false/>
-                <key>uploadSymbols</key>
-                <false/>
-              </dict>
-              </plist>
-              EOF
-
-              xcodebuild -exportArchive \
-                -archivePath build/ios/Runner.xcarchive \
-                -exportPath build/ios/ipa \
-                -exportOptionsPlist exportOptions.plist \
-                -sdk iphoneos \
-                CODE_SIGN_IDENTITY="" \
-                CODE_SIGNING_REQUIRED=NO \
-                CODE_SIGNING_ALLOWED=NO \
-                -verbose
-
-              ls -la build/ios/ipa/*.ipa || echo "IPA生成失败，检查日志"
+              flutter build ios --release --no-codesign
+              mkdir -p build/ios/ipa/Payload
+              cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+              cd build/ios/ipa
+              zip -r ios-build.zip Payload/
+              mv ios-build.zip ios-build.ipa
+              rm -rf Payload
             artifact-paths: build/ios/ipa/*.ipa
 
           - platform: windows
