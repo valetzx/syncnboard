@@ -18,7 +18,7 @@ jobs:
         include:
           - platform: android
             os: ubuntu-latest
-            build-command: flutter build apk --release --split-per-abi
+            build-command: flutter build apk --release --target-platform android-arm,android-arm64
             artifact-paths: build/app/outputs/apk/release/*.apk
 
           - platform: ios
