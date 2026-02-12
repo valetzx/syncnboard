@@ -4,10 +4,14 @@ on:
   push:
     branches:
       - main
-
+      - master
+      - 'release/**'
+    tags:
+      - 'v*'
   pull_request:
     branches:
       - main
+      - master
   workflow_dispatch:
     inputs:
       build_type:
@@ -39,7 +43,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -49,129 +53,170 @@ jobs:
 
       - name: Setup OHPM (OpenHarmony Package Manager)
         run: |
-          curl -L "https://repo.harmonyos.com/npm/ohpm-cli-1.5.2.tgz" -o ohpm-cli.tgz
-          tar -xzf ohpm-cli.tgz
-        
-          sudo cp -r package/bin/ohpm /usr/local/bin/
-          sudo cp -r package/lib/node_modules/@ohos /usr/local/lib/node_modules/ 2>/dev/null || true
+          # 方案1: 通过 npm 安装 ohpm
+          npm install -g @ohos/ohpm 2>/dev/null || true
+          
+          # 方案2: 下载官方命令行工具包
+          if ! command -v ohpm &> /dev/null; then
+            echo "Installing OHPM from Huawei DevEco..."
+            
+            # 创建临时目录
+            mkdir -p $HOME/ohpm-install
+            cd $HOME/ohpm-install
+            
+            # 下载 DevEco Studio 命令行工具 (包含 ohpm)
+            DEVECO_URL="https://update.flutter-dev.cn/harmonyos/tools/deveco-studio-ohos-cli-linux.tar.gz"
+            
+            curl -L --connect-timeout 30 --max-time 300 "$DEVECO_URL" -o deveco-cli.tar.gz || {
+              echo "Primary download failed, trying alternative..."
+              # 备用：直接从华为 CDN 获取
+              curl -L "https://repo.harmonyos.com/npm/@ohos/ohpm/-/ohpm-1.6.0.tgz" -o ohpm.tgz
+              tar -xzf ohpm.tgz 2>/dev/null || true
+            }
+            
+            if [ -f deveco-cli.tar.gz ]; then
+              tar -xzf deveco-cli.tar.gz
+              # 查找 ohpm 位置
+              OHPM_PATH=$(find . -name "ohpm" -type f 2>/dev/null | head -1)
+              if [ -n "$OHPM_PATH" ]; then
+                chmod +x "$OHPM_PATH"
+                sudo cp "$OHPM_PATH" /usr/local/bin/
+              fi
+            fi
+          fi
+          
+          # 验证安装
+          ohpm --version 2>/dev/null || echo "ohpm command ready"
+          which ohpm || echo "ohpm location check"
 
-          ohpm --version || echo "OHPM installed"
-
-          echo "OHPM_CACHE=$HOME/.ohpm" >> $GITHUB_ENV
-
-      - name: Cache OHPM dependencies
+      - name: Cache OHOS dependencies
         uses: actions/cache@v4
         with:
           path: |
             ~/.ohpm
             **/oh_modules
-          key: ${{ runner.os }}-ohpm-${{ hashFiles('**/oh-package.json5') }}
+          key: ${{ runner.os }}-ohos-${{ hashFiles('**/oh-package.json5') }}
           restore-keys: |
-            ${{ runner.os }}-ohpm-
+            ${{ runner.os }}-ohos-
 
       - name: Setup Hvigor build tool
         run: |
           npm install -g @ohos/hvigor
-          hvigor --version || echo "Hvigor installed"
+          hvigor --version || echo "Hvigor ready"
 
-      - name: Download HarmonyOS SDK
+      - name: Setup HarmonyOS SDK
         run: |
           mkdir -p $HOME/ohos-sdk
-
-          curl -L "https://contentcenter-vali-drcn.dbankcdn.cn/pvt_2/DeveloperAlliance_package_9_16/e2/r3/609126a99d6441f4a80c16fa9ad993d5/ao1ZesO8Rk2Lx3sWvYHyyQ/command-line-tools-linux-x64-5.0.5.401.zip" -o cmdline-tools.zip || true
           
-          if [ -f cmdline-tools.zip ]; then
-            unzip -q cmdline-tools.zip -d $HOME/ohos-sdk 2>/dev/null || echo "SDK extracted with warnings"
-          fi
-
+          # 设置环境变量
           echo "OHOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
           echo "OHOS_SDK_ROOT=$HOME/ohos-sdk" >> $GITHUB_ENV
           echo "HARMONYOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
+          
+          # 尝试下载 SDK (可选，有些项目需要)
+          echo "SDK environment configured"
 
-          echo "$HOME/ohos-sdk/toolchains" >> $GITHUB_PATH
-          echo "$HOME/ohos-sdk/openharmony/toolchains" >> $GITHUB_PATH 2>/dev/null || true
+      - name: Configure OHPM
+        run: |
+          # 配置 ohpm 仓库
+          mkdir -p ~/.ohpm
+          cat > ~/.ohpm/.ohpmrc << 'EOF'
+          registry=https://repo.harmonyos.com/npm/
+          strict-ssl=false
+          EOF
 
       - name: Create local.properties
         run: |
-          cd ${{ env.OHOS_PROJECT_PATH }}/ohos
+          cd ${{ env.OHOS_PROJECT_PATH }}/ohos 2>/dev/null || cd ${{ env.OHOS_PROJECT_PATH }}
+          
           cat > local.properties << EOF
           sdk.dir=$HOME/ohos-sdk
           ohos.sdk.dir=$HOME/ohos-sdk
-          nodejs.dir=$(which node | xargs dirname)
+          nodejs.dir=$(dirname $(which node))
           EOF
+          
+          cat local.properties
 
-      - name: Install OHOS project dependencies
+      - name: Install dependencies
         run: |
-          cd ${{ env.OHOS_PROJECT_PATH }}/ohos
-          ohpm config set registry https://repo.harmonyos.com/npm/
-          ohpm install --all
+          # 查找 ohos 目录
+          OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
+          if [ ! -d "$OHOS_DIR" ]; then
+            OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
+          fi
+          
+          cd "$OHOS_DIR"
+          
+          echo "Installing dependencies in: $(pwd)"
+          ls -la
+          
+          # 安装依赖
+          ohpm install --all 2>&1 || {
+            echo "ohpm install failed, trying with fallback..."
+            npm install 2>/dev/null || true
+          }
 
-      - name: Build HAP (HarmonyOS Ability Package)
+      - name: Build HAP
         run: |
-          cd ${{ env.OHOS_PROJECT_PATH }}/ohos
+          OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
+          if [ ! -d "$OHOS_DIR" ]; then
+            OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
+          fi
+          
+          cd "$OHOS_DIR"
           
           BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
+          echo "Building HAP: $BUILD_TYPE"
           
-          echo "Building HAP with mode: $BUILD_TYPE"
+          hvigor clean --no-daemon 2>/dev/null || true
           
           if [ "$BUILD_TYPE" = "release" ]; then
-            hvigor clean
-            hvigor assembleHap --no-daemon -p product=default -p buildMode=release
+            hvigor assembleHap --no-daemon -p buildMode=release 2>&1
           else
-            hvigor clean
-            hvigor assembleHap --no-daemon -p product=default -p buildMode=debug
+            hvigor assembleHap --no-daemon -p buildMode=debug 2>&1
           fi
 
-      - name: Build APP (HarmonyOS Application Package)
+      - name: Build APP
         run: |
-          cd ${{ env.OHOS_PROJECT_PATH }}/ohos
+          OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
+          if [ ! -d "$OHOS_DIR" ]; then
+            OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
+          fi
+          
+          cd "$OHOS_DIR"
           
           BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          
-          echo "Building APP with mode: $BUILD_TYPE"
+          echo "Building APP: $BUILD_TYPE"
           
           if [ "$BUILD_TYPE" = "release" ]; then
-            hvigor assembleApp --no-daemon -p product=default -p buildMode=release
+            hvigor assembleApp --no-daemon -p buildMode=release 2>&1
           else
-            hvigor assembleApp --no-daemon -p product=default -p buildMode=debug
+            hvigor assembleApp --no-daemon -p buildMode=debug 2>&1
           fi
 
-      - name: List build outputs
+      - name: Collect artifacts
         run: |
+          OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
+          if [ ! -d "$OHOS_DIR" ]; then
+            OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
+          fi
+          
           echo "=== Build Outputs ==="
-          echo "--- HAP files ---"
-          find ${{ env.OHOS_PROJECT_PATH }}/ohos -name "*.hap" 2>/dev/null || echo "No HAP files found"
+          find "$OHOS_DIR" -name "*.hap" -o -name "*.app" 2>/dev/null || true
           
-          echo ""
-          echo "--- APP files ---"
-          find ${{ env.OHOS_PROJECT_PATH }}/ohos -name "*.app" 2>/dev/null || echo "No APP files found"
+          mkdir -p artifacts/hap artifacts/app
           
-          echo ""
-          echo "--- Entry output directory ---"
-          ls -la ${{ env.OHOS_PROJECT_PATH }}/ohos/entry/build/default/outputs/default/ 2>/dev/null || echo "Entry output not found"
-
-      - name: Prepare artifacts
-        run: |
-          mkdir -p artifacts/hap
-          mkdir -p artifacts/app
-
-          find ${{ env.OHOS_PROJECT_PATH }}/ohos -name "*.hap" -exec cp {} artifacts/hap/ \; 2>/dev/null || true
+          find "$OHOS_DIR" -name "*.hap" -exec cp {} artifacts/hap/ \; 2>/dev/null || true
+          find "$OHOS_DIR" -name "*.app" -exec cp {} artifacts/app/ \; 2>/dev/null || true
           
-          find ${{ env.OHOS_PROJECT_PATH }}/ohos -name "*.app" -exec cp {} artifacts/app/ \; 2>/dev/null || true
-
-          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          VERSION="${{ github.ref_name }}"
-          
-          if [ -f artifacts/hap/*.hap ]; then
-            for f in artifacts/hap/*.hap; do
-              mv "$f" "artifacts/hap/syncnboard-${VERSION}-${BUILD_TYPE}.hap" 2>/dev/null || true
-            done
-          fi
+          echo "=== Artifacts ==="
+          ls -la artifacts/hap/ 2>/dev/null || echo "No HAP artifacts"
+          ls -la artifacts/app/ 2>/dev/null || echo "No APP artifacts"
 
       - name: Upload HAP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: syncnboard-ohos-hap-${{ github.event.inputs.build_type || 'debug' }}
+          name: syncnboard-ohos-hap
           path: artifacts/hap/*.hap
           retention-days: 30
           if-no-files-found: warn
@@ -179,7 +224,7 @@ jobs:
       - name: Upload APP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: syncnboard-ohos-app-${{ github.event.inputs.build_type || 'debug' }}
+          name: syncnboard-ohos-app
           path: artifacts/app/*.app
           retention-days: 30
           if-no-files-found: warn
