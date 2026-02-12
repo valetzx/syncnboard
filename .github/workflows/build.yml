@@ -126,7 +126,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           cd build/linux/x64/release/bundle
-          zip -r ../../../../linux-build.zip ./*
+          zip -r $GITHUB_WORKSPACE/linux-build.zip ./*
           cd -
           ls -lh linux-build.zip
 
@@ -135,7 +135,7 @@ jobs:
         run: |
           APP_FILE=$(find build/macos/Build/Products/Release -name "*.app" -maxdepth 1)
           cd $(dirname "$APP_FILE")
-          zip -r ../../../../../macos-build.zip $(basename "$APP_FILE")
+          zip -r $GITHUB_WORKSPACE/macos-build.zip $(basename "$APP_FILE")
           cd -
           ls -lh macos-build.zip
 
