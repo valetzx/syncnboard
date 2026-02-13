@@ -25,7 +25,6 @@ env:
   BUNDLE_NAME: "cool.cnb.syncnboard"
   OHOS_REPO_URL: "https://cnb.cool/wget/i/synclipboard"
   OHOS_BRANCH: "ohos"
-  # 使用华为官方主仓库
   HUAWEI_MIRROR: "https://repo.huaweicloud.com"
 
 jobs:
@@ -42,7 +41,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'  # 降低Node版本，提高兼容性
+          node-version: '22' 
           cache: 'npm'
 
       - name: Setup Java
