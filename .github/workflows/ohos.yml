@@ -19,6 +19,7 @@ on:
 env:
   FLUTTER_VERSION: '3.22.0'
   OHOS_SDK_VERSION: '12'
+  OHOS_SDK_ROOT: '/home/runner/ohos-sdk'
 
 jobs:
   build-hap:
@@ -55,30 +56,47 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Setup OHOS SDK
+      - name: Install dependencies for OHOS SDK
         run: |
-          echo "Setting up OHOS SDK..."
-          mkdir -p $HOME/ohos-sdk
-          # 下载 OHOS SDK (实际使用时需要替换为官方下载链接)
-          # wget -q https://repo.huaweicloud.com/openharmony/os-cli/ohos-sdk-linux.tar.gz -O ohos-sdk.tar.gz
-          # tar -xzf ohos-sdk.tar.gz -C $HOME/ohos-sdk
-          echo "OHOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
-          echo "OHOS_SDK_ROOT=$HOME/ohos-sdk" >> $GITHUB_ENV
+          # 安装 SDK 下载和解压所需的依赖
+          sudo apt update && sudo apt install -y wget unzip zip openjdk-17-jdk
 
-      - name: Setup Hvigor
+      - name: Setup OHOS SDK (完整配置)
         run: |
-          echo "Setting up Hvigor build tool..."
-          # 配置鸿蒙官方 npm 镜像源（临时生效，仅本次安装使用）
-          npm config set registry https://repo.huaweicloud.com/repository/npm/
-          # 安装 Hvigor（指定具体版本更稳定，避免版本兼容问题）
-          npm install -g @ohos/hvigor@4.0.0
-          # 恢复默认 npm 源（可选，避免影响后续其他 npm 操作）
-          npm config set registry https://registry.npmjs.org/
+          echo "Setting up OpenHarmony SDK ${{ env.OHOS_SDK_VERSION }}..."
+          mkdir -p ${{ env.OHOS_SDK_ROOT }}
+          
+          # 方式1：使用 OpenHarmony CLI 工具下载 SDK（推荐）
+          npm install -g @ohos/dev-cli
+          ohos sdk install ${{ env.OHOS_SDK_VERSION }} --channel=Release --no-interactive
+          
+          # 方式2：直接下载预编译的 SDK 包（备用，如果方式1失败）
+          # wget -q https://repo.huaweicloud.com/openharmony/os/${{ env.OHOS_SDK_VERSION }}/ohos-sdk-linux-${{ env.OHOS_SDK_VERSION }}.zip -O ohos-sdk.zip
+          # unzip -q ohos-sdk.zip -d ${{ env.OHOS_SDK_ROOT }}
+          
+          # 配置 SDK 环境变量
+          echo "OHOS_SDK_HOME=${{ env.OHOS_SDK_ROOT }}" >> $GITHUB_ENV
+          echo "${{ env.OHOS_SDK_ROOT }}/toolchains" >> $GITHUB_PATH
+          echo "${{ env.OHOS_SDK_ROOT }}/hvigor/bin" >> $GITHUB_PATH
+          
+          # 验证 Hvigor 是否可用
+          if [ -f "${{ env.OHOS_SDK_ROOT }}/hvigor/bin/hvigor" ]; then
+            chmod +x ${{ env.OHOS_SDK_ROOT }}/hvigor/bin/hvigor
+            echo "Hvigor path: ${{ env.OHOS_SDK_ROOT }}/hvigor/bin/hvigor"
+            ${{ env.OHOS_SDK_ROOT }}/hvigor/bin/hvigor -v
+          else
+            echo "Hvigor not found in SDK, trying fallback method..."
+            # 备选方案：从 Flutter OHOS 插件获取 Hvigor
+            flutter pub global activate ohos_flutter
+            echo "$HOME/.pub-cache/bin" >> $GITHUB_PATH
+          fi
 
       - name: Get Flutter dependencies
         working-directory: synclipboard
         run: |
           flutter pub get
+          # 确保 OHOS 相关依赖也安装
+          flutter pub add ohos_flutter
 
       - name: Configure Flutter for OHOS
         working-directory: synclipboard
@@ -88,18 +106,22 @@ jobs:
             echo "Creating ohos directory structure..."
             flutter create --platforms=ohos .
           fi
+          # 配置 OHOS SDK 路径到 Flutter 项目
+          echo "ohos.sdk.dir=${{ env.OHOS_SDK_ROOT }}" > ohos/local.properties
 
       - name: Build OHOS HAP (Debug)
         if: github.event.inputs.build_type != 'release'
         working-directory: synclipboard
         run: |
-          flutter build hap --debug
+          # 使用 Flutter 自带的构建命令，它会自动调用 SDK 中的 Hvigor
+          flutter build hap --debug --verbose
 
       - name: Build OHOS HAP (Release)
         if: github.event.inputs.build_type == 'release'
         working-directory: synclipboard
         run: |
-          flutter build hap --release
+          # 使用 Flutter 自带的构建命令，它会自动调用 SDK 中的 Hvigor
+          flutter build hap --release --verbose
 
       - name: Find HAP files
         id: find_hap
