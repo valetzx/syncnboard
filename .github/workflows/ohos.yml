@@ -1,10 +1,6 @@
 name: Build OHOS HAP
 
 on:
-  push:
-    branches:
-      - main
-
   workflow_dispatch:
     inputs:
       build_type:
@@ -15,158 +11,158 @@ on:
         options:
           - debug
           - release
+      branch:
+        description: 'Branch to build'
+        required: false
+        default: 'ohos'
+        type: string
 
 env:
-  FLUTTER_VERSION: '3.22.0'
+  FLUTTER_OHOS_VERSION: '3.7.12-ohos-1.0.4'
+  WORK_DIR: ${{ github.workspace }}
 
 jobs:
-  build-hap:
+  build:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # 克隆指定仓库的 ohos2 分支到 synclipboard 目录
-      - name: Clone synclipboard (ohos2 branch)
+      - name: Clone repository
         run: |
-          rm -rf synclipboard
-          git clone -b ohos2 https://cnb.cool/wget/i/synclipboard synclipboard
-          if [ ! -d "synclipboard" ]; then
-            echo "Failed to clone synclipboard repository"
-            exit 1
-          fi
-          echo "Successfully cloned synclipboard (ohos2 branch)"
+          # 确定要构建的分支
+          BRANCH="${{ github.event.inputs.branch || 'ohos' }}"
+          echo "Building branch: $BRANCH"
 
-      - name: Setup Java 17
+          # 克隆指定仓库和分支
+          git clone --depth 1 --branch "$BRANCH" \
+            https://cnb.cool/wget/i/synclipboard.git "${{ github.workspace }}"
+
+          echo "Working directory: ${{ github.workspace }}"
+          ls -la "${{ github.workspace }}"
+
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Flutter (适配 3.22.0 版本)
-        uses: subosito/flutter-action@v2
+      - name: Cache Flutter OHOS
+        id: cache-flutter
+        uses: actions/cache@v4
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: 'stable'
-          cache: true
+          path: /tmp/flutter_ohos
+          key: flutter-ohos-${{ env.FLUTTER_OHOS_VERSION }}
 
-      - name: Install system dependencies
+      - name: Install Flutter OHOS SDK
+        if: steps.cache-flutter.outputs.cache-hit != 'true'
         run: |
-          # 安装 Flutter 构建 OHOS 所需的基础依赖
-          sudo apt update && sudo apt install -y \
-            unzip zip curl git \
-            lib32z1 lib32stdc++6 \
-            nodejs npm
-          # 验证基础环境
-          flutter --version
-          java -version
-          node -v
+          git clone --depth 1 --branch ${{ env.FLUTTER_OHOS_VERSION }} \
+            https://gitee.com/openharmony-sig/flutter_flutter.git /tmp/flutter_ohos
+          cd /tmp/flutter_ohos
+          git tag ${{ env.FLUTTER_OHOS_VERSION }}
 
-      - name: Configure Flutter for OHOS (适配 3.22.0)
+      - name: Setup OHOS SDK directory
         run: |
-          # Flutter 3.22.0 仅支持 --enable-ohos 参数，没有 desktop 后缀
-          flutter config --enable-ohos
-          # 验证 Flutter 配置
-          flutter config
-          flutter doctor -v
+          mkdir -p $HOME/ohos-sdk/hmscore/toolchains
+          mkdir -p $HOME/ohos-sdk/openharmony/toolchains
+          mkdir -p $HOME/ohos-tools/bin
 
-      - name: Prepare Flutter project
-        working-directory: synclipboard
-        run: |
-          # 安装项目依赖
-          flutter pub get
-          # 确保 OHOS 模块存在（如果不存在则创建）
-          if [ ! -d "ohos" ]; then
-            echo "Generating OHOS project files..."
-            flutter create --platforms=ohos .
-          fi
-          # 修复可能的权限问题
-          chmod -R 755 .
+          # Create hdc placeholder
+          cat > $HOME/ohos-sdk/hmscore/toolchains/hdc << 'EOF'
+          #!/bin/bash
+          echo "HDC placeholder for CI build"
+          EOF
+          chmod +x $HOME/ohos-sdk/hmscore/toolchains/hdc
+          ln -sf $HOME/ohos-sdk/hmscore/toolchains/hdc $HOME/ohos-sdk/openharmony/toolchains/hdc
 
-      - name: Build OHOS HAP (核心构建步骤)
-        working-directory: synclipboard
+          # Create ohpm placeholder
+          cat > $HOME/ohos-tools/bin/ohpm << 'EOF'
+          #!/bin/bash
+          echo "OHPM placeholder"
+          EOF
+          chmod +x $HOME/ohos-tools/bin/ohpm
+
+          # Create hvigorw placeholder
+          cat > $HOME/ohos-tools/bin/hvigorw << 'EOF'
+          #!/bin/bash
+          echo "Hvigor placeholder"
+          EOF
+          chmod +x $HOME/ohos-tools/bin/hvigorw
+
+      - name: Configure environment
         run: |
-          # 选择构建类型（Debug/Release）
+          echo "FLUTTER_OHOS_ROOT=/tmp/flutter_ohos" >> $GITHUB_ENV
+          echo "OHOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
+          echo "/tmp/flutter_ohos/bin" >> $GITHUB_PATH
+          echo "$HOME/ohos-tools/bin" >> $GITHUB_PATH
+
+      - name: Get dependencies
+        run: |
+          cd ${{ github.workspace }}
+          /tmp/flutter_ohos/bin/flutter pub get
+
+      - name: Build Flutter for OHOS
+        run: |
+          cd ${{ github.workspace }}
           BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          echo "Building OHOS HAP (${BUILD_TYPE})..."
-          
-          # 核心构建命令（适配 Flutter 3.22.0）
-          if [ "$BUILD_TYPE" = "release" ]; then
-            flutter build hap --release --verbose
-          else
-            flutter build hap --debug --verbose
-          fi
+          /tmp/flutter_ohos/bin/flutter build ohos --${BUILD_TYPE} || true
 
-      - name: Locate HAP files (容错版)
-        id: find_hap
-        working-directory: synclipboard
+      - name: Extract Flutter engine native libraries
         run: |
-          # 扩大搜索范围，兼容不同的输出路径
-          HAP_FILES=$(find . -name "*.hap" -type f | grep -E "build|ohos/outputs")
-          if [ -n "$HAP_FILES" ]; then
-            # 取第一个 HAP 文件
-            HAP_FILE=$(echo "$HAP_FILES" | head -n 1)
-            echo "hap_path=$HAP_FILE" >> $GITHUB_OUTPUT
-            echo "hap_name=$(basename $HAP_FILE)" >> $GITHUB_OUTPUT
-            echo "Found HAP files:"
-            echo "$HAP_FILES"
-          else
-            echo "WARNING: No HAP file found, listing possible directories:"
-            # 列出所有可能的输出目录，帮助调试
-            ls -la build/ || true
-            ls -la ohos/ || true
-            ls -la ohos/outputs/ || true
-            # 不中断流程，仅警告
-            echo "hap_path=none" >> $GITHUB_OUTPUT
-            echo "hap_name=none" >> $GITHUB_OUTPUT
+          # Download engine if needed
+          /tmp/flutter_ohos/bin/flutter precache || true
+
+          ENGINE_DIR="/tmp/flutter_ohos/bin/cache/artifacts/engine/ohos-arm64"
+          LIBS_DIR="${{ github.workspace }}/ohos/entry/libs/arm64-v8a"
+
+          mkdir -p "$LIBS_DIR"
+          mkdir -p /tmp/har_extract
+          cd /tmp/har_extract
+
+          # Extract HAR (gzip + tar format)
+          if [ -f "$ENGINE_DIR/flutter.har" ]; then
+            gunzip -c "$ENGINE_DIR/flutter.har" > flutter.tar 2>/dev/null || \
+              cp "$ENGINE_DIR/flutter.har" flutter.tar
+
+            tar -xf flutter.tar 2>/dev/null || true
+
+            if [ -d "package/libs/arm64-v8a" ]; then
+              cp package/libs/arm64-v8a/*.so "$LIBS_DIR/"
+              echo "Native libraries extracted:"
+              ls -la "$LIBS_DIR"
+            fi
           fi
 
-      - name: Upload HAP artifact (仅当找到文件时)
-        if: steps.find_hap.outputs.hap_path != 'none'
+      - name: Build unsigned HAP
+        run: |
+          cd ${{ github.workspace }}
+          chmod +x ohos/build_hap.sh
+
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
+          if [ "$BUILD_TYPE" = "release" ]; then
+            ./ohos/build_hap.sh --release
+          else
+            ./ohos/build_hap.sh
+          fi
+
+      - name: Upload HAP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: syncnboard-ohos-${{ github.event.inputs.build_type || 'debug' }}
-          path: synclipboard/${{ steps.find_hap.outputs.hap_path }}
+          name: ohos-hap-${{ github.event.inputs.build_type || 'debug' }}
+          path: |
+            ${{ github.workspace }}/ohos/entry/build/default/outputs/default/*.hap
           retention-days: 30
 
-      - name: Create Release (仅 Release 构建且手动触发)
-        if: github.event.inputs.build_type == 'release' && github.event_name == 'workflow_dispatch' && steps.find_hap.outputs.hap_path != 'none'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ github.run_number }}
-          name: Release v${{ github.run_number }}
-          files: synclipboard/${{ steps.find_hap.outputs.hap_path }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # 简化版构建（自托管 runner 备用）
-  build-hap-simple:
-    runs-on: self-hosted
-    if: false
-    
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Clone synclipboard (ohos2 branch)
+      - name: Summary
         run: |
-          rm -rf synclipboard
-          git clone -b ohos2 https://cnb.cool/wget/i/synclipboard synclipboard
-          if [ ! -d "synclipboard" ]; then
-            exit 1
-          fi
-
-      - name: Build HAP (简化版)
-        working-directory: synclipboard
-        run: |
-          flutter pub get
-          flutter build hap --release
-
-      - name: Upload HAP
-        uses: actions/upload-artifact@v4
-        with:
-          name: syncnboard-ohos-release
-          path: |
-            synclipboard/build/ohos/outputs/*.hap
-            synclipboard/ohos/outputs/*.hap
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** https://cnb.cool/wget/i/synclipboard" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.event.inputs.branch || 'ohos' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Type:** ${{ github.event.inputs.build_type || 'debug' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Working Dir:** ${{ github.workspace }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Flutter OHOS:** ${{ env.FLUTTER_OHOS_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Output" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh ${{ github.workspace }}/ohos/entry/build/default/outputs/default/*.hap 2>/dev/null || echo "No HAP file generated"
+          echo '```' >> $GITHUB_STEP_SUMMARY
