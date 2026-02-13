@@ -1,14 +1,20 @@
-name: Build HarmonyOS (OHOS)
+name: Build OHOS HAP
 
 on:
   push:
     branches:
       - main
-
+      - master
+    paths:
+      - 'synclipboard/**'
+      - '.github/workflows/build-ohos.yml'
   pull_request:
     branches:
       - main
-
+      - master
+    paths:
+      - 'synclipboard/**'
+      - '.github/workflows/build-ohos.yml'
   workflow_dispatch:
     inputs:
       build_type:
@@ -21,28 +27,30 @@ on:
           - release
 
 env:
-  OHOS_SDK_VERSION: "12"
-  BUNDLE_NAME: "cool.cnb.syncnboard"
-  OHOS_REPO_URL: "https://cnb.cool/wget/i/synclipboard"
-  OHOS_BRANCH: "ohos"
-  HUAWEI_MIRROR: "https://repo.huaweicloud.com"
+  FLUTTER_VERSION: '3.22.0'
+  OHOS_SDK_VERSION: '12'
 
 jobs:
-  build-ohos:
+  build-hap:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Clone OHOS project from external repository
-        run: |
-          git clone -b ${{ env.OHOS_BRANCH }} ${{ env.OHOS_REPO_URL }} ohos-project
-          echo "OHOS_PROJECT_PATH=$GITHUB_WORKSPACE/ohos-project" >> $GITHUB_ENV
-          ls -la $GITHUB_WORKSPACE/ohos-project
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20' 
-          cache: 'npm'
+      # 新增步骤：克隆指定仓库的 ohos2 分支到 synclipboard 目录
+      - name: Clone synclipboard (ohos2 branch)
+        run: |
+          # 删除原有 synclipboard 目录（如果存在），确保使用指定仓库的代码
+          rm -rf synclipboard
+          # 克隆指定仓库的 ohos2 分支到 synclipboard 目录
+          git clone -b ohos2 https://cnb.cool/wget/i/synclipboard synclipboard
+          # 验证克隆结果
+          if [ ! -d "synclipboard" ]; then
+            echo "Failed to clone synclipboard repository"
+            exit 1
+          fi
+          echo "Successfully cloned synclipboard (ohos2 branch)"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -50,233 +58,111 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Install system dependencies
-        run: |
-          # 安装必要的系统依赖
-          sudo apt-get update
-          sudo apt-get install -y wget unzip curl openjdk-17-jdk lib32z1 lib32stdc++6
-          
-          # 配置临时环境变量
-          echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> $GITHUB_ENV
-
-      - name: Download and install OHPM/Hvigor directly (核心修复)
-        run: |
-          # 创建工具目录
-          mkdir -p $HOME/ohos-tools/bin
-          cd $HOME/ohos-tools
-          
-          # 方案1: 直接从华为开源镜像获取Hvigor和OHPM (最可靠)
-          HVIGOR_VERSION="4.0.10"
-          OHPM_VERSION="1.7.0"
-          
-          # 下载Hvigor (使用华为云镜像)
-          echo "Downloading Hvigor $HVIGOR_VERSION..."
-          wget --no-check-certificate -q -O hvigor.zip \
-            "${{ env.HUAWEI_MIRROR }}/openharmony/compiler/hvigor/${HVIGOR_VERSION}/hvigor-${HVIGOR_VERSION}.zip" || {
-            # 备用链接
-            wget --no-check-certificate -q -O hvigor.zip \
-              "https://gitee.com/openharmony/hvigor/releases/download/${HVIGOR_VERSION}/hvigor-${HVIGOR_VERSION}.zip"
-          }
-          
-          # 下载OHPM (使用华为云镜像)
-          echo "Downloading OHPM $OHPM_VERSION..."
-          wget --no-check-certificate -q -O ohpm.tar.gz \
-            "${{ env.HUAWEI_MIRROR }}/openharmony/ohpm/ohpm-cli/${OHPM_VERSION}/ohpm-cli-linux-${OHPM_VERSION}.tar.gz" || {
-            # 备用链接
-            wget --no-check-certificate -q -O ohpm.tar.gz \
-              "https://repo.harmonyos.com/ohpm/ohpm-cli/${OHPM_VERSION}/ohpm-cli-linux-${OHPM_VERSION}.tar.gz"
-          }
-          
-          # 解压安装
-          if [ -f "hvigor.zip" ]; then
-            unzip -q hvigor.zip -d hvigor
-            chmod +x hvigor/bin/hvigor
-            sudo ln -sf $HOME/ohos-tools/hvigor/bin/hvigor /usr/local/bin/hvigor
-            echo "HVIGOR_HOME=$HOME/ohos-tools/hvigor" >> $GITHUB_ENV
-          fi
-          
-          if [ -f "ohpm.tar.gz" ]; then
-            tar -zxf ohpm.tar.gz -C ohpm --strip-components=1
-            chmod +x ohpm/bin/ohpm
-            sudo ln -sf $HOME/ohos-tools/ohpm/bin/ohpm /usr/local/bin/ohpm
-          fi
-          
-          # 验证安装
-          echo "=== Verify installations ==="
-          which hvigor && hvigor --version || echo "Hvigor installed at $HOME/ohos-tools/hvigor/bin/hvigor"
-          which ohpm && ohpm --version || echo "OHPM installed at $HOME/ohos-tools/ohpm/bin/ohpm"
-          
-          # 添加到PATH
-          echo "PATH=\$PATH:$HOME/ohos-tools/hvigor/bin:$HOME/ohos-tools/ohpm/bin" >> $GITHUB_ENV
-
-      - name: Cache OHOS dependencies
-        uses: actions/cache@v4
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          path: |
-            ~/.ohpm
-            **/oh_modules
-            $HOME/ohos-tools
-          key: ${{ runner.os }}-ohos-tools-${{ hashFiles('**/oh-package.json5') }}
-          restore-keys: |
-            ${{ runner.os }}-ohos-tools-
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
 
-      - name: Setup HarmonyOS SDK (简化版)
+      - name: Setup OHOS SDK
         run: |
+          echo "Setting up OHOS SDK..."
           mkdir -p $HOME/ohos-sdk
-          
-          # 设置环境变量
+          # 下载 OHOS SDK (实际使用时需要替换为官方下载链接)
+          # wget -q https://repo.huaweicloud.com/openharmony/os-cli/ohos-sdk-linux.tar.gz -O ohos-sdk.tar.gz
+          # tar -xzf ohos-sdk.tar.gz -C $HOME/ohos-sdk
           echo "OHOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
           echo "OHOS_SDK_ROOT=$HOME/ohos-sdk" >> $GITHUB_ENV
-          echo "HARMONYOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
-          
-          # 配置SDK基础结构 (无需完整下载，仅创建目录)
-          mkdir -p $HOME/ohos-sdk/{tools,platforms,toolchains}
-          touch $HOME/ohos-sdk/sdk.version
 
-      - name: Configure OHPM
+      - name: Setup Hvigor
         run: |
-          # 配置ohpm仓库 (使用华为云镜像)
-          mkdir -p ~/.ohpm
-          cat > ~/.ohpm/.ohpmrc << EOF
-          registry=${{ env.HUAWEI_MIRROR }}/openharmony/npm/
-          strict-ssl=false
-          timeout=60000
-          EOF
-          
-          # 验证配置
-          cat ~/.ohpm/.ohpmrc
-          ohpm config list 2>/dev/null || true
+          echo "Setting up Hvigor build tool..."
+          npm install -g @ohos/hvigor
 
-      - name: Create local.properties
+      - name: Get Flutter dependencies
+        working-directory: synclipboard
         run: |
-          cd ${{ env.OHOS_PROJECT_PATH }}/ohos 2>/dev/null || cd ${{ env.OHOS_PROJECT_PATH }}
-          
-          # 获取hvigor路径
-          HVIGOR_PATH=$(which hvigor || echo "$HOME/ohos-tools/hvigor/bin/hvigor")
-          
-          cat > local.properties << EOF
-          sdk.dir=$HOME/ohos-sdk
-          ohos.sdk.dir=$HOME/ohos-sdk
-          nodejs.dir=$(dirname $(which node))
-          hvigor.path=$HVIGOR_PATH
-          EOF
-          
-          cat local.properties
+          flutter pub get
 
-      - name: Install project dependencies
+      - name: Configure Flutter for OHOS
+        working-directory: synclipboard
         run: |
-          # 查找ohos目录
-          OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
-          if [ ! -d "$OHOS_DIR" ]; then
-            OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
-          fi
-          
-          cd "$OHOS_DIR"
-          
-          echo "Installing dependencies in: $(pwd)"
-          ls -la
-          
-          # 优先使用ohpm安装
-          if [ -f "oh-package.json5" ]; then
-            echo "Installing via OHPM..."
-            ohpm install --all --verbose || {
-              echo "OHPM install failed, trying manual fallback..."
-              # 手动创建oh_modules目录避免构建报错
-              mkdir -p oh_modules
-            }
+          # 确保 ohos 目录存在
+          if [ ! -d "ohos" ]; then
+            echo "Creating ohos directory structure..."
+            flutter create --platforms=ohos .
           fi
 
-      - name: Build HAP with Hvigor
+      - name: Build OHOS HAP (Debug)
+        if: github.event.inputs.build_type != 'release'
+        working-directory: synclipboard
         run: |
-          OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
-          if [ ! -d "$OHOS_DIR" ]; then
-            OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
-          fi
-          
-          cd "$OHOS_DIR"
-          
-          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          echo "Building HAP (${BUILD_TYPE})..."
-          
-          # 获取hvigor执行路径
-          HVIGOR_CMD=$(which hvigor || echo "$HOME/ohos-tools/hvigor/bin/hvigor")
-          
-          # 执行构建
-          $HVIGOR_CMD clean --no-daemon 2>/dev/null || true
-          
-          if [ "$BUILD_TYPE" = "release" ]; then
-            $HVIGOR_CMD assembleHap --no-daemon -p buildMode=release
+          flutter build hap --debug
+
+      - name: Build OHOS HAP (Release)
+        if: github.event.inputs.build_type == 'release'
+        working-directory: synclipboard
+        run: |
+          flutter build hap --release
+
+      - name: Find HAP files
+        id: find_hap
+        working-directory: synclipboard
+        run: |
+          HAP_FILE=$(find build -name "*.hap" -type f | head -n 1)
+          if [ -n "$HAP_FILE" ]; then
+            echo "hap_path=$HAP_FILE" >> $GITHUB_OUTPUT
+            echo "hap_name=$(basename $HAP_FILE)" >> $GITHUB_OUTPUT
           else
-            $HVIGOR_CMD assembleHap --no-daemon -p buildMode=debug
+            echo "No HAP file found"
+            exit 1
           fi
-
-      - name: Build APP with Hvigor
-        run: |
-          OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
-          if [ ! -d "$OHOS_DIR" ]; then
-            OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
-          fi
-          
-          cd "$OHOS_DIR"
-          
-          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          echo "Building APP (${BUILD_TYPE})..."
-          
-          HVIGOR_CMD=$(which hvigor || echo "$HOME/ohos-tools/hvigor/bin/hvigor")
-          
-          if [ "$BUILD_TYPE" = "release" ]; then
-            $HVIGOR_CMD assembleApp --no-daemon -p buildMode=release
-          else
-            $HVIGOR_CMD assembleApp --no-daemon -p buildMode=debug
-          fi
-
-      - name: Collect build artifacts
-        run: |
-          OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
-          if [ ! -d "$OHOS_DIR" ]; then
-            OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
-          fi
-          
-          echo "=== Build Outputs ==="
-          find "$OHOS_DIR" -name "*.hap" -o -name "*.app" 2>/dev/null || echo "No build outputs found"
-          
-          # 创建产物目录
-          mkdir -p artifacts/hap artifacts/app
-          
-          # 复制产物
-          find "$OHOS_DIR" -name "*.hap" -exec cp {} artifacts/hap/ \; 2>/dev/null || true
-          find "$OHOS_DIR" -name "*.app" -exec cp {} artifacts/app/ \; 2>/dev/null || true
-          
-          # 列出产物
-          echo "=== Collected Artifacts ==="
-          ls -la artifacts/hap/ 2>/dev/null || echo "No HAP files"
-          ls -la artifacts/app/ 2>/dev/null || echo "No APP files"
 
       - name: Upload HAP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: syncnboard-ohos-hap
-          path: artifacts/hap/*.hap
+          name: syncnboard-ohos-${{ github.event.inputs.build_type || 'debug' }}
+          path: synclipboard/${{ steps.find_hap.outputs.hap_path }}
           retention-days: 30
-          if-no-files-found: warn
 
-      - name: Upload APP artifact
-        uses: actions/upload-artifact@v4
+      - name: Create Release
+        if: github.event.inputs.build_type == 'release' && github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v1
         with:
-          name: syncnboard-ohos-app
-          path: artifacts/app/*.app
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Create Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/hap/*.hap
-            artifacts/app/*.app
-          draft: false
-          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
-          generate_release_notes: true
+          tag_name: v${{ github.run_number }}
+          name: Release v${{ github.run_number }}
+          files: synclipboard/${{ steps.find_hap.outputs.hap_path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 简化版构建 - 使用预配置的 OHOS 环境
+  build-hap-simple:
+    runs-on: self-hosted
+    if: false  # 需要配置 self-hosted runner 时启用
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 为简化版也添加克隆步骤
+      - name: Clone synclipboard (ohos2 branch)
+        run: |
+          rm -rf synclipboard
+          git clone -b ohos2 https://cnb.cool/wget/i/synclipboard synclipboard
+          if [ ! -d "synclipboard" ]; then
+            echo "Failed to clone synclipboard repository"
+            exit 1
+          fi
+
+      - name: Build HAP
+        working-directory: synclipboard
+        run: |
+          flutter pub get
+          flutter build hap --release
+
+      - name: Upload HAP
+        uses: actions/upload-artifact@v4
+        with:
+          name: syncnboard-ohos-release
+          path: synclipboard/build/ohos/outputs/*.hap
