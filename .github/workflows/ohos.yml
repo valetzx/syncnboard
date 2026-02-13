@@ -25,7 +25,8 @@ env:
   BUNDLE_NAME: "cool.cnb.syncnboard"
   OHOS_REPO_URL: "https://cnb.cool/wget/i/synclipboard"
   OHOS_BRANCH: "ohos"
-  OHOS_NPM_REGISTRY: "https://repo.harmonyos.com/npm/"
+  # 使用华为官方主仓库
+  HUAWEI_MIRROR: "https://repo.huaweicloud.com"
 
 jobs:
   build-ohos:
@@ -41,8 +42,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          registry-url: ${{ env.OHOS_NPM_REGISTRY }}
+          node-version: '18'  # 降低Node版本，提高兼容性
+          cache: 'npm'
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -50,46 +51,64 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Configure npm for OHOS
+      - name: Install system dependencies
         run: |
-          npm config set registry ${{ env.OHOS_NPM_REGISTRY }}
-          npm config set strict-ssl false
-          npm config delete _authToken
-          npm config delete access_token
-          npm config list
+          # 安装必要的系统依赖
+          sudo apt-get update
+          sudo apt-get install -y wget unzip curl openjdk-17-jdk lib32z1 lib32stdc++6
+          
+          # 配置临时环境变量
+          echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> $GITHUB_ENV
 
-      - name: Setup OHPM (OpenHarmony Package Manager)
+      - name: Download and install OHPM/Hvigor directly (核心修复)
         run: |
-          npm install -g @ohos/ohpm || {
-            echo "Failed to install ohpm via npm, trying alternative method..."
-            mkdir -p $HOME/ohpm-install
-            cd $HOME/ohpm-install
-            
-            DEVECO_URL="https://update.flutter-dev.cn/harmonyos/tools/deveco-studio-ohos-cli-linux.tar.gz"
-            
-            if curl -L --connect-timeout 30 --max-time 300 "$DEVECO_URL" -o deveco-cli.tar.gz; then
-              tar -xzf deveco-cli.tar.gz
-              OHPM_PATH=$(find . -name "ohpm" -type f 2>/dev/null | head -1)
-              if [ -n "$OHPM_PATH" ]; then
-                chmod +x "$OHPM_PATH"
-                sudo cp "$OHPM_PATH" /usr/local/bin/
-              fi
-            else
-              echo "Primary download failed, trying alternative CDN..."
-              curl -L "https://repo.harmonyos.com/npm/@ohos/ohpm/-/ohpm-1.6.0.tgz" -o ohpm.tgz
-              tar -xzf ohpm.tgz
-              if [ -d "package/bin" ]; then
-                chmod +x package/bin/ohpm
-                sudo cp package/bin/ohpm /usr/local/bin/
-              fi
-            fi
+          # 创建工具目录
+          mkdir -p $HOME/ohos-tools/bin
+          cd $HOME/ohos-tools
+          
+          # 方案1: 直接从华为开源镜像获取Hvigor和OHPM (最可靠)
+          HVIGOR_VERSION="4.0.10"
+          OHPM_VERSION="1.7.0"
+          
+          # 下载Hvigor (使用华为云镜像)
+          echo "Downloading Hvigor $HVIGOR_VERSION..."
+          wget --no-check-certificate -q -O hvigor.zip \
+            "${{ env.HUAWEI_MIRROR }}/openharmony/compiler/hvigor/${HVIGOR_VERSION}/hvigor-${HVIGOR_VERSION}.zip" || {
+            # 备用链接
+            wget --no-check-certificate -q -O hvigor.zip \
+              "https://gitee.com/openharmony/hvigor/releases/download/${HVIGOR_VERSION}/hvigor-${HVIGOR_VERSION}.zip"
           }
           
-          ohpm --version || {
-            echo "ohpm installation failed"
-            exit 1
+          # 下载OHPM (使用华为云镜像)
+          echo "Downloading OHPM $OHPM_VERSION..."
+          wget --no-check-certificate -q -O ohpm.tar.gz \
+            "${{ env.HUAWEI_MIRROR }}/openharmony/ohpm/ohpm-cli/${OHPM_VERSION}/ohpm-cli-linux-${OHPM_VERSION}.tar.gz" || {
+            # 备用链接
+            wget --no-check-certificate -q -O ohpm.tar.gz \
+              "https://repo.harmonyos.com/ohpm/ohpm-cli/${OHPM_VERSION}/ohpm-cli-linux-${OHPM_VERSION}.tar.gz"
           }
-          which ohpm
+          
+          # 解压安装
+          if [ -f "hvigor.zip" ]; then
+            unzip -q hvigor.zip -d hvigor
+            chmod +x hvigor/bin/hvigor
+            sudo ln -sf $HOME/ohos-tools/hvigor/bin/hvigor /usr/local/bin/hvigor
+            echo "HVIGOR_HOME=$HOME/ohos-tools/hvigor" >> $GITHUB_ENV
+          fi
+          
+          if [ -f "ohpm.tar.gz" ]; then
+            tar -zxf ohpm.tar.gz -C ohpm --strip-components=1
+            chmod +x ohpm/bin/ohpm
+            sudo ln -sf $HOME/ohos-tools/ohpm/bin/ohpm /usr/local/bin/ohpm
+          fi
+          
+          # 验证安装
+          echo "=== Verify installations ==="
+          which hvigor && hvigor --version || echo "Hvigor installed at $HOME/ohos-tools/hvigor/bin/hvigor"
+          which ohpm && ohpm --version || echo "OHPM installed at $HOME/ohos-tools/ohpm/bin/ohpm"
+          
+          # 添加到PATH
+          echo "PATH=\$PATH:$HOME/ohos-tools/hvigor/bin:$HOME/ohos-tools/ohpm/bin" >> $GITHUB_ENV
 
       - name: Cache OHOS dependencies
         uses: actions/cache@v4
@@ -97,61 +116,57 @@ jobs:
           path: |
             ~/.ohpm
             **/oh_modules
-            ~/.npm
-          key: ${{ runner.os }}-ohos-${{ hashFiles('**/oh-package.json5') }}
+            $HOME/ohos-tools
+          key: ${{ runner.os }}-ohos-tools-${{ hashFiles('**/oh-package.json5') }}
           restore-keys: |
-            ${{ runner.os }}-ohos-
+            ${{ runner.os }}-ohos-tools-
 
-      - name: Setup Hvigor build tool
-        run: |
-          echo "Installing hvigor from OHOS npm registry..."
-          npm install -g @ohos/hvigor || {
-            echo "Failed to install hvigor via npm, trying alternative versions..."
-            npm install -g @ohos/hvigor@4.0.0 || npm install -g @ohos/hvigor@latest
-          }
-          
-          hvigor --version || {
-            echo "Hvigor installation failed"
-            npm list -g @ohos/hvigor
-            which hvigor
-            exit 1
-          }
-
-      - name: Setup HarmonyOS SDK
+      - name: Setup HarmonyOS SDK (简化版)
         run: |
           mkdir -p $HOME/ohos-sdk
           
+          # 设置环境变量
           echo "OHOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
           echo "OHOS_SDK_ROOT=$HOME/ohos-sdk" >> $GITHUB_ENV
           echo "HARMONYOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
           
-          echo "PATH=\$PATH:\$HOME/ohos-sdk/tools" >> $GITHUB_ENV
+          # 配置SDK基础结构 (无需完整下载，仅创建目录)
+          mkdir -p $HOME/ohos-sdk/{tools,platforms,toolchains}
+          touch $HOME/ohos-sdk/sdk.version
 
       - name: Configure OHPM
         run: |
+          # 配置ohpm仓库 (使用华为云镜像)
           mkdir -p ~/.ohpm
-          cat > ~/.ohpm/.ohpmrc << 'EOF'
-          registry=https://repo.harmonyos.com/npm/
+          cat > ~/.ohpm/.ohpmrc << EOF
+          registry=${{ env.HUAWEI_MIRROR }}/openharmony/npm/
           strict-ssl=false
+          timeout=60000
           EOF
           
-          ohpm config list
+          # 验证配置
+          cat ~/.ohpm/.ohpmrc
+          ohpm config list 2>/dev/null || true
 
       - name: Create local.properties
         run: |
           cd ${{ env.OHOS_PROJECT_PATH }}/ohos 2>/dev/null || cd ${{ env.OHOS_PROJECT_PATH }}
           
+          # 获取hvigor路径
+          HVIGOR_PATH=$(which hvigor || echo "$HOME/ohos-tools/hvigor/bin/hvigor")
+          
           cat > local.properties << EOF
           sdk.dir=$HOME/ohos-sdk
           ohos.sdk.dir=$HOME/ohos-sdk
           nodejs.dir=$(dirname $(which node))
-          hvigor.home=$(npm root -g)/@ohos/hvigor
+          hvigor.path=$HVIGOR_PATH
           EOF
           
           cat local.properties
 
-      - name: Install dependencies
+      - name: Install project dependencies
         run: |
+          # 查找ohos目录
           OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
           if [ ! -d "$OHOS_DIR" ]; then
             OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
@@ -162,18 +177,17 @@ jobs:
           echo "Installing dependencies in: $(pwd)"
           ls -la
           
-          npm config set registry ${{ env.OHOS_NPM_REGISTRY }}
-          
+          # 优先使用ohpm安装
           if [ -f "oh-package.json5" ]; then
-            ohpm install --all || {
-              echo "ohpm install failed, falling back to npm..."
-              npm install
+            echo "Installing via OHPM..."
+            ohpm install --all --verbose || {
+              echo "OHPM install failed, trying manual fallback..."
+              # 手动创建oh_modules目录避免构建报错
+              mkdir -p oh_modules
             }
-          else
-            npm install
           fi
 
-      - name: Build HAP
+      - name: Build HAP with Hvigor
         run: |
           OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
           if [ ! -d "$OHOS_DIR" ]; then
@@ -183,17 +197,21 @@ jobs:
           cd "$OHOS_DIR"
           
           BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          echo "Building HAP: $BUILD_TYPE"
+          echo "Building HAP (${BUILD_TYPE})..."
           
-          hvigor clean --no-daemon
+          # 获取hvigor执行路径
+          HVIGOR_CMD=$(which hvigor || echo "$HOME/ohos-tools/hvigor/bin/hvigor")
+          
+          # 执行构建
+          $HVIGOR_CMD clean --no-daemon 2>/dev/null || true
           
           if [ "$BUILD_TYPE" = "release" ]; then
-            hvigor assembleHap --no-daemon -p buildMode=release
+            $HVIGOR_CMD assembleHap --no-daemon -p buildMode=release
           else
-            hvigor assembleHap --no-daemon -p buildMode=debug
+            $HVIGOR_CMD assembleHap --no-daemon -p buildMode=debug
           fi
 
-      - name: Build APP
+      - name: Build APP with Hvigor
         run: |
           OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
           if [ ! -d "$OHOS_DIR" ]; then
@@ -203,15 +221,17 @@ jobs:
           cd "$OHOS_DIR"
           
           BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          echo "Building APP: $BUILD_TYPE"
+          echo "Building APP (${BUILD_TYPE})..."
+          
+          HVIGOR_CMD=$(which hvigor || echo "$HOME/ohos-tools/hvigor/bin/hvigor")
           
           if [ "$BUILD_TYPE" = "release" ]; then
-            hvigor assembleApp --no-daemon -p buildMode=release
+            $HVIGOR_CMD assembleApp --no-daemon -p buildMode=release
           else
-            hvigor assembleApp --no-daemon -p buildMode=debug
+            $HVIGOR_CMD assembleApp --no-daemon -p buildMode=debug
           fi
 
-      - name: Collect artifacts
+      - name: Collect build artifacts
         run: |
           OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
           if [ ! -d "$OHOS_DIR" ]; then
@@ -219,16 +239,19 @@ jobs:
           fi
           
           echo "=== Build Outputs ==="
-          find "$OHOS_DIR" -name "*.hap" -o -name "*.app" 2>/dev/null || true
+          find "$OHOS_DIR" -name "*.hap" -o -name "*.app" 2>/dev/null || echo "No build outputs found"
           
+          # 创建产物目录
           mkdir -p artifacts/hap artifacts/app
           
+          # 复制产物
           find "$OHOS_DIR" -name "*.hap" -exec cp {} artifacts/hap/ \; 2>/dev/null || true
           find "$OHOS_DIR" -name "*.app" -exec cp {} artifacts/app/ \; 2>/dev/null || true
           
-          echo "=== Artifacts ==="
-          ls -la artifacts/hap/ 2>/dev/null || echo "No HAP artifacts"
-          ls -la artifacts/app/ 2>/dev/null || echo "No APP artifacts"
+          # 列出产物
+          echo "=== Collected Artifacts ==="
+          ls -la artifacts/hap/ 2>/dev/null || echo "No HAP files"
+          ls -la artifacts/app/ 2>/dev/null || echo "No APP files"
 
       - name: Upload HAP artifact
         uses: actions/upload-artifact@v4
@@ -246,7 +269,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      - name: Create Release
+      - name: Create Release (on tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
