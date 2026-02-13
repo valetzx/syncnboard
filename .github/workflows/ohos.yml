@@ -4,14 +4,11 @@ on:
   push:
     branches:
       - main
-      - master
-      - 'release/**'
-    tags:
-      - 'v*'
+
   pull_request:
     branches:
       - main
-      - master
+
   workflow_dispatch:
     inputs:
       build_type:
@@ -28,6 +25,7 @@ env:
   BUNDLE_NAME: "cool.cnb.syncnboard"
   OHOS_REPO_URL: "https://cnb.cool/wget/i/synclipboard"
   OHOS_BRANCH: "ohos"
+  OHOS_NPM_REGISTRY: "https://repo.harmonyos.com/npm/"
 
 jobs:
   build-ohos:
@@ -44,6 +42,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          registry-url: ${{ env.OHOS_NPM_REGISTRY }}
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -51,43 +50,46 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Configure npm for OHOS
+        run: |
+          npm config set registry ${{ env.OHOS_NPM_REGISTRY }}
+          npm config set strict-ssl false
+          npm config delete _authToken
+          npm config delete access_token
+          npm config list
+
       - name: Setup OHPM (OpenHarmony Package Manager)
         run: |
-          # 方案1: 通过 npm 安装 ohpm
-          npm install -g @ohos/ohpm 2>/dev/null || true
-          
-          # 方案2: 下载官方命令行工具包
-          if ! command -v ohpm &> /dev/null; then
-            echo "Installing OHPM from Huawei DevEco..."
-            
-            # 创建临时目录
+          npm install -g @ohos/ohpm || {
+            echo "Failed to install ohpm via npm, trying alternative method..."
             mkdir -p $HOME/ohpm-install
             cd $HOME/ohpm-install
             
-            # 下载 DevEco Studio 命令行工具 (包含 ohpm)
             DEVECO_URL="https://update.flutter-dev.cn/harmonyos/tools/deveco-studio-ohos-cli-linux.tar.gz"
             
-            curl -L --connect-timeout 30 --max-time 300 "$DEVECO_URL" -o deveco-cli.tar.gz || {
-              echo "Primary download failed, trying alternative..."
-              # 备用：直接从华为 CDN 获取
-              curl -L "https://repo.harmonyos.com/npm/@ohos/ohpm/-/ohpm-1.6.0.tgz" -o ohpm.tgz
-              tar -xzf ohpm.tgz 2>/dev/null || true
-            }
-            
-            if [ -f deveco-cli.tar.gz ]; then
+            if curl -L --connect-timeout 30 --max-time 300 "$DEVECO_URL" -o deveco-cli.tar.gz; then
               tar -xzf deveco-cli.tar.gz
-              # 查找 ohpm 位置
               OHPM_PATH=$(find . -name "ohpm" -type f 2>/dev/null | head -1)
               if [ -n "$OHPM_PATH" ]; then
                 chmod +x "$OHPM_PATH"
                 sudo cp "$OHPM_PATH" /usr/local/bin/
               fi
+            else
+              echo "Primary download failed, trying alternative CDN..."
+              curl -L "https://repo.harmonyos.com/npm/@ohos/ohpm/-/ohpm-1.6.0.tgz" -o ohpm.tgz
+              tar -xzf ohpm.tgz
+              if [ -d "package/bin" ]; then
+                chmod +x package/bin/ohpm
+                sudo cp package/bin/ohpm /usr/local/bin/
+              fi
             fi
-          fi
+          }
           
-          # 验证安装
-          ohpm --version 2>/dev/null || echo "ohpm command ready"
-          which ohpm || echo "ohpm location check"
+          ohpm --version || {
+            echo "ohpm installation failed"
+            exit 1
+          }
+          which ohpm
 
       - name: Cache OHOS dependencies
         uses: actions/cache@v4
@@ -95,35 +97,45 @@ jobs:
           path: |
             ~/.ohpm
             **/oh_modules
+            ~/.npm
           key: ${{ runner.os }}-ohos-${{ hashFiles('**/oh-package.json5') }}
           restore-keys: |
             ${{ runner.os }}-ohos-
 
       - name: Setup Hvigor build tool
         run: |
-          npm install -g @ohos/hvigor
-          hvigor --version || echo "Hvigor ready"
+          echo "Installing hvigor from OHOS npm registry..."
+          npm install -g @ohos/hvigor || {
+            echo "Failed to install hvigor via npm, trying alternative versions..."
+            npm install -g @ohos/hvigor@4.0.0 || npm install -g @ohos/hvigor@latest
+          }
+          
+          hvigor --version || {
+            echo "Hvigor installation failed"
+            npm list -g @ohos/hvigor
+            which hvigor
+            exit 1
+          }
 
       - name: Setup HarmonyOS SDK
         run: |
           mkdir -p $HOME/ohos-sdk
           
-          # 设置环境变量
           echo "OHOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
           echo "OHOS_SDK_ROOT=$HOME/ohos-sdk" >> $GITHUB_ENV
           echo "HARMONYOS_SDK_HOME=$HOME/ohos-sdk" >> $GITHUB_ENV
           
-          # 尝试下载 SDK (可选，有些项目需要)
-          echo "SDK environment configured"
+          echo "PATH=\$PATH:\$HOME/ohos-sdk/tools" >> $GITHUB_ENV
 
       - name: Configure OHPM
         run: |
-          # 配置 ohpm 仓库
           mkdir -p ~/.ohpm
           cat > ~/.ohpm/.ohpmrc << 'EOF'
           registry=https://repo.harmonyos.com/npm/
           strict-ssl=false
           EOF
+          
+          ohpm config list
 
       - name: Create local.properties
         run: |
@@ -133,13 +145,13 @@ jobs:
           sdk.dir=$HOME/ohos-sdk
           ohos.sdk.dir=$HOME/ohos-sdk
           nodejs.dir=$(dirname $(which node))
+          hvigor.home=$(npm root -g)/@ohos/hvigor
           EOF
           
           cat local.properties
 
       - name: Install dependencies
         run: |
-          # 查找 ohos 目录
           OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}/ohos"
           if [ ! -d "$OHOS_DIR" ]; then
             OHOS_DIR="${{ env.OHOS_PROJECT_PATH }}"
@@ -150,11 +162,16 @@ jobs:
           echo "Installing dependencies in: $(pwd)"
           ls -la
           
-          # 安装依赖
-          ohpm install --all 2>&1 || {
-            echo "ohpm install failed, trying with fallback..."
-            npm install 2>/dev/null || true
-          }
+          npm config set registry ${{ env.OHOS_NPM_REGISTRY }}
+          
+          if [ -f "oh-package.json5" ]; then
+            ohpm install --all || {
+              echo "ohpm install failed, falling back to npm..."
+              npm install
+            }
+          else
+            npm install
+          fi
 
       - name: Build HAP
         run: |
@@ -168,12 +185,12 @@ jobs:
           BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
           echo "Building HAP: $BUILD_TYPE"
           
-          hvigor clean --no-daemon 2>/dev/null || true
+          hvigor clean --no-daemon
           
           if [ "$BUILD_TYPE" = "release" ]; then
-            hvigor assembleHap --no-daemon -p buildMode=release 2>&1
+            hvigor assembleHap --no-daemon -p buildMode=release
           else
-            hvigor assembleHap --no-daemon -p buildMode=debug 2>&1
+            hvigor assembleHap --no-daemon -p buildMode=debug
           fi
 
       - name: Build APP
@@ -189,9 +206,9 @@ jobs:
           echo "Building APP: $BUILD_TYPE"
           
           if [ "$BUILD_TYPE" = "release" ]; then
-            hvigor assembleApp --no-daemon -p buildMode=release 2>&1
+            hvigor assembleApp --no-daemon -p buildMode=release
           else
-            hvigor assembleApp --no-daemon -p buildMode=debug 2>&1
+            hvigor assembleApp --no-daemon -p buildMode=debug
           fi
 
       - name: Collect artifacts
