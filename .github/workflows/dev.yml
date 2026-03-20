@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
+    inputs:
+      branch_name:
+        description: '要克隆的 Git 分支名称'
+        required: true
+        default: 'dev'
+        type: string
 
 permissions:
   contents: write
@@ -51,7 +57,7 @@ jobs:
     steps:
       - name: Clone repo
         run: |
-          git clone -b feature/input-simulation https://cnb.cool/syncnboard/syncnboard temp_repo
+          git clone -b ${{ github.event.inputs.branch_name }} https://cnb.cool/syncnboard/syncnboard temp_repo
           if ($Env:RUNNER_OS -eq "Windows") {
               Get-ChildItem -Path temp_repo -Recurse | Move-Item -Destination . -Force
               Remove-Item -Path temp_repo -Recurse -Force
