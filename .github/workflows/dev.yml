@@ -55,7 +55,7 @@ jobs:
     steps:
       - name: Clone repo
         run: |
-          git clone -b ${{ github.event.inputs.branch_name }} https://cnb.cool/syncnboard/syncnboard temp_repo
+          git clone -b ${{ github.event.inputs.branch_name }} https://cnb.cool/wget/i/synclipboard temp_repo
           if ($Env:RUNNER_OS -eq "Windows") {
               Get-ChildItem -Path temp_repo -Recurse | Move-Item -Destination . -Force
               Remove-Item -Path temp_repo -Recurse -Force
