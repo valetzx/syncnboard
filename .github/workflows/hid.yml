@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ─── Job 1: Windows - 编译 UMDF 2.0 驱动 ──────────────────────
   build-driver:
     name: Build UMDF Driver (${{ matrix.platform }} ${{ matrix.configuration }})
     runs-on: windows-2022
@@ -26,42 +25,24 @@ jobs:
               mv temp_repo/.* . 2>/dev/null || true
               rm -rf temp_repo
           }
-          Get-ChildItem || ls -l
-        shell: pwsh
-
-      - name: list repo structure
-        shell: pwsh
-        run: |
-          Write-Host "=== Root ==="
           Get-ChildItem -Name
-          Write-Host "=== synclipboard ==="
-          if (Test-Path "synclipboard") { Get-ChildItem -Name synclipboard }
-          else { Write-Host "synclipboard NOT FOUND" }
-          Write-Host "=== native ==="
-          if (Test-Path "synclipboard\native") { Get-ChildItem -Name "synclipboard\native" }
-          else { Write-Host "native NOT FOUND" }
-          Write-Host "=== hidkbd_driver ==="
-          if (Test-Path "synclipboard\native\hidkbd_driver") { Get-ChildItem -Name "synclipboard\native\hidkbd_driver" }
-          else { Write-Host "hidkbd_driver NOT FOUND" }
-          Write-Host "=== Search .sln ==="
-          Get-ChildItem -Recurse -Filter "*.sln" -Name
+        shell: pwsh
 
       - name: Add MSBuild to PATH (Developer Command Prompt)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      # NuGet 恢复依赖（如果有 packages.config 的话）
       - name: Restore NuGet packages (if needed)
         run: |
-          if (Test-Path "synclipboard\native\hidkbd_driver\packages.config") {
-            nuget restore synclipboard\native\hidkbd_driver\packages.config -PackagesDirectory synclipboard\native\hidkbd_driver\packages
+          if (Test-Path "native\hidkbd_driver\packages.config") {
+            nuget restore native\hidkbd_driver\packages.config -PackagesDirectory native\hidkbd_driver\packages
           }
         continue-on-error: true
 
       - name: Build UMDF driver solution
         run: |
-          msbuild synclipboard\native\hidkbd_driver\HidKbdDriver.sln `
+          msbuild native\hidkbd_driver\HidKbdDriver.sln `
             /p:Configuration=${{ matrix.configuration }} `
             /p:Platform=${{ matrix.platform }} `
             /p:WindowsSdkVersion=10.0 `
@@ -73,36 +54,33 @@ jobs:
       - name: Verify build output
         shell: pwsh
         run: |
-          $dll = Get-Item -Path "synclipboard\native\hidkbd_driver\driver\${{ matrix.platform }}\${{ matrix.configuration }}\HidKbdDriver.dll" -ErrorAction SilentlyContinue
+          $dll = Get-Item -Path "native\hidkbd_driver\driver\${{ matrix.platform }}\${{ matrix.configuration }}\HidKbdDriver.dll" -ErrorAction SilentlyContinue
           if (-not $dll) {
             Write-Error "Build failed: HidKbdDriver.dll not found at expected path"
           }
-
           Write-Host "=== Build artifacts ==="
           $dll | Select-Object Name, Length, LastWriteTime | Format-List
 
       - name: Package installer
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path synclipboard\native\hidkbd_driver\package | Out-Null
-          Copy-Item synclipboard\native\hidkbd_driver\driver\${{ matrix.platform }}\${{ matrix.configuration }}\HidKbdDriver.dll synclipboard\native\hidkbd_driver\package\
-          Copy-Item synclipboard\native\hidkbd_driver\driver\HidKbdDriver.inf synclipboard\native\hidkbd_driver\package\
-
+          New-Item -ItemType Directory -Force -Path native\hidkbd_driver\package | Out-Null
+          Copy-Item native\hidkbd_driver\driver\${{ matrix.platform }}\${{ matrix.configuration }}\HidKbdDriver.dll native\hidkbd_driver\package\
+          Copy-Item native\hidkbd_driver\driver\HidKbdDriver.inf native\hidkbd_driver\package\
           @{
             date    = (Get-Date).ToUniversalTime().ToString("o")
             sha     = "${{ github.sha }}"
             config  = "${{ matrix.configuration }}"
             platform = "${{ matrix.platform }}"
             ref     = "${{ github.ref }}"
-          } | ConvertTo-Json | Out-File -FilePath synclipboard\native\hidkbd_driver\package\build_info.json -Encoding UTF8
-
-          Get-ChildItem synclipboard\native\hidkbd_driver\package\ | Format-Table Name, Length -AutoSize
+          } | ConvertTo-Json | Out-File -FilePath native\hidkbd_driver\package\build_info.json -Encoding UTF8
+          Get-ChildItem native\hidkbd_driver\package\ | Format-Table Name, Length -AutoSize
 
       - name: Upload driver package artifact
         uses: actions/upload-artifact@v4
         with:
           name: hidkbd-driver-${{ matrix.platform }}
-          path: synclipboard/native/hidkbd_driver/package/
+          path: native/hidkbd_driver/package/
           retention-days: 30
 
       - name: Archive build logs
