@@ -1,0 +1,97 @@
+name: Build HID Keyboard Driver
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # ─── Job 1: Windows - 编译 UMDF 2.0 驱动 ──────────────────────
+  build-driver:
+    name: Build UMDF Driver (${{ matrix.platform }} ${{ matrix.configuration }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Release]
+        platform: [x64]
+
+    steps:
+      - name: Clone repo
+        run: |
+          git clone -b main https://cnb.cool/wget/i/synclipboard temp_repo
+          if ($Env:RUNNER_OS -eq "Windows") {
+              Get-ChildItem -Path temp_repo -Recurse | Move-Item -Destination . -Force
+              Remove-Item -Path temp_repo -Recurse -Force
+          } else {
+              mv temp_repo/* .
+              mv temp_repo/.* . 2>/dev/null || true
+              rm -rf temp_repo
+          }
+          Get-ChildItem || ls -l
+        shell: pwsh
+
+      - name: Add MSBuild to PATH (Developer Command Prompt)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # NuGet 恢复依赖（如果有 packages.config 的话）
+      - name: Restore NuGet packages (if needed)
+        run: |
+          if (Test-Path "hidkbd_driver\packages.config") {
+            nuget restore hidkbd_driver\packages.config -PackagesDirectory hidkbd_driver\packages
+          }
+        continue-on-error: true
+
+      - name: Build UMDF driver solution
+        run: |
+          msbuild hidkbd_driver\HidKbdDriver.sln `
+            /p:Configuration=${{ matrix.configuration }} `
+            /p:Platform=${{ matrix.platform }} `
+            /p:WindowsSdkVersion=10.0 `
+            /verbosity:minimal `
+            /t:Rebuild `
+            /fl `
+            /flp:logfile=_build.log;verbosity=detailed
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $dll = Get-Item -Path "hidkbd_driver\driver\${{ matrix.platform }}\${{ matrix.configuration }}\HidKbdDriver.dll" -ErrorAction SilentlyContinue
+          if (-not $dll) {
+            Write-Error "Build failed: HidKbdDriver.dll not found at expected path"
+          }
+
+          Write-Host "=== Build artifacts ==="
+          $dll | Select-Object Name, Length, LastWriteTime | Format-List
+
+      - name: Package installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path hidkbd_driver\package | Out-Null
+          Copy-Item hidkbd_driver\driver\${{ matrix.platform }}\${{ matrix.configuration }}\HidKbdDriver.dll hidkbd_driver\package\
+          Copy-Item hidkbd_driver\driver\HidKbdDriver.inf hidkbd_driver\package\
+
+          @{
+            date    = (Get-Date).ToUniversalTime().ToString("o")
+            sha     = "${{ github.sha }}"
+            config  = "${{ matrix.configuration }}"
+            platform = "${{ matrix.platform }}"
+            ref     = "${{ github.ref }}"
+          } | ConvertTo-Json | Out-File -FilePath hidkbd_driver\package\build_info.json -Encoding UTF8
+
+          Get-ChildItem hidkbd_driver\package\ | Format-Table Name, Length -AutoSize
+
+      - name: Upload driver package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hidkbd-driver-${{ matrix.platform }}
+          path: hidkbd_driver/package/
+          retention-days: 30
+
+      - name: Archive build logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs-${{ matrix.configuration }}-${{ matrix.platform }}
+          path: _build.log
+          if-no-files-found: ignore
