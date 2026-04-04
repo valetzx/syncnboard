@@ -51,7 +51,7 @@ jobs:
             /verbosity:minimal `
             /t:Rebuild `
             /fl `
-            /flp:logfile=_build.log;verbosity=detailed
+            /flp:"logfile=_build.log;verbosity=detailed"
 
       - name: Verify build output
         shell: pwsh
