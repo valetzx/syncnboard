@@ -29,6 +29,23 @@ jobs:
           Get-ChildItem || ls -l
         shell: pwsh
 
+      - name: Debug: list repo structure
+        shell: pwsh
+        run: |
+          Write-Host "=== Root ==="
+          Get-ChildItem -Name
+          Write-Host "=== synclipboard ==="
+          if (Test-Path "synclipboard") { Get-ChildItem -Name synclipboard }
+          else { Write-Host "synclipboard NOT FOUND" }
+          Write-Host "=== native ==="
+          if (Test-Path "synclipboard\native") { Get-ChildItem -Name "synclipboard\native" }
+          else { Write-Host "native NOT FOUND" }
+          Write-Host "=== hidkbd_driver ==="
+          if (Test-Path "synclipboard\native\hidkbd_driver") { Get-ChildItem -Name "synclipboard\native\hidkbd_driver" }
+          else { Write-Host "hidkbd_driver NOT FOUND" }
+          Write-Host "=== Search .sln ==="
+          Get-ChildItem -Recurse -Filter "*.sln" -Name
+
       - name: Add MSBuild to PATH (Developer Command Prompt)
         uses: ilammy/msvc-dev-cmd@v1
         with:
