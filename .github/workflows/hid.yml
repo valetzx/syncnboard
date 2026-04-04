@@ -28,6 +28,9 @@ jobs:
           Get-ChildItem -Name
         shell: pwsh
 
+      - name: Install WDK
+        uses: eyskoc/setup-wdk@1
+
       - name: Add MSBuild to PATH (Developer Command Prompt)
         uses: ilammy/msvc-dev-cmd@v1
         with:
