@@ -1,4 +1,4 @@
-name: Flutter Build Dev
+name: Flutter Build TDP
 
 on:
   workflow_dispatch:
